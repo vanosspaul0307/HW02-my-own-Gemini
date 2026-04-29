@@ -72,12 +72,12 @@ def clear_history():
 
 def get_current_time() -> str:
     """取得伺服器目前的即時日期與時間。"""
-    print("👉 [系統日誌] AI 觸發工具：get_current_time")
+    print("[系統日誌] AI 觸發工具：get_current_time")
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def get_weather(location_en: str) -> str:
     """查詢指定地點即時天氣。參數必須是「英文地名」（如 Hsinchu）。"""
-    print(f"👉 [系統日誌] AI 觸發工具：get_weather (地點: {location_en})")
+    print(f"[系統日誌] AI 觸發工具：get_weather (地點: {location_en})")
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         geocode_url = f"https://geocoding-api.open-meteo.com/v1/search?name={location_en}&count=1&language=zh-TW"
@@ -100,7 +100,7 @@ def get_weather(location_en: str) -> str:
 
 def get_financial_quote(symbol: str) -> str:
     """查詢虛擬貨幣即時報價 (BTC, ETH, SOL, BNB)。"""
-    print(f"👉 [系統日誌] AI 觸發工具：get_financial_quote (標的: {symbol})")
+    print(f"[系統日誌] AI 觸發工具：get_financial_quote (標的: {symbol})")
     try:
         symbol = symbol.upper().replace(" ", "")
         if symbol in ["BTC", "ETH", "SOL", "BNB"]:
@@ -123,16 +123,16 @@ async def chat_endpoint(request: ChatRequest):
     if request.model == "auto":
         if needs_tool:
             request.model = "gemini-2.5-pro"
-            auto_log_msg = "⚙️ [Auto Routing] 偵測到「工具呼叫」，自動切換至強邏輯模型 Gemini 2.5 Pro。"
+            auto_log_msg = "[Auto Routing] 偵測到「工具呼叫」，自動切換至強邏輯模型 Gemini 2.5 Pro。"
         elif has_images:
             request.model = "gemini-2.5-pro"
-            auto_log_msg = "⚙️ [Auto Routing] 偵測到「多模態圖片」，分配至視覺旗艦模型 Gemini 2.5 Pro。"
+            auto_log_msg = "[Auto Routing] 偵測到「多模態圖片」，分配至視覺旗艦模型 Gemini 2.5 Pro。"
         else:
             request.model = "gemini-2.5-flash"
-            auto_log_msg = "⚙️ [Auto Routing] 一般對話，分配至極速模型 Gemini 2.5 Flash。"
+            auto_log_msg = "[Auto Routing] 一般對話，分配至極速模型 Gemini 2.5 Flash。"
     elif request.model == "gemini-2.5-flash" and needs_tool:
         request.model = "gemini-2.5-pro"
-        auto_log_msg = "⚙️ [系統強制重定向] 為確保工具呼叫精準度，已自動升級至 Gemini 2.5 Pro。"
+        auto_log_msg = "[系統強制重定向] 為確保工具呼叫精準度，已自動升級至 Gemini 2.5 Pro。"
 
     config_params = {"temperature": request.temperature}
     
