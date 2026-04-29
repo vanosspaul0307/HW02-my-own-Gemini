@@ -8,13 +8,43 @@
         .sidebar { width: 300px; display: flex; flex-direction: column; gap: 15px; }
         .chat-container { flex-grow: 1; display: flex; flex-direction: column; gap: 10px; }
         #chat-box { border: 1px solid #ccc; height: 500px; overflow-y: auto; padding: 10px; }
-        .message { margin-bottom: 10px; padding: 10px; border-radius: 8px; line-height: 1.4; }
+        
+        .message { margin-bottom: 10px; padding: 10px; border-radius: 8px; line-height: 1.4; white-space: pre-wrap; }
         .user-msg { background-color: #e3f2fd; text-align: left; margin-left: 20%; }
         .model-msg { background-color: #f5f5f5; text-align: left; margin-right: 20%; }
         
         #user-input { padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
-        button { padding: 10px 20px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        button:hover { background-color: #45a049; }
+        #image-upload { padding: 8px; font-size: 14px; }
+        button { padding: 10px 20px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; transition: background-color 0.3s; }
+        button:hover { filter: brightness(90%); }
+        
+        .clear-btn { background-color: #f44336; margin-top: auto; }
+        .clear-btn:hover { background-color: #d32f2f; }
+
+        .thinking {
+            color: #888;
+            font-style: italic;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+        #image-preview-container {
+            display: none; padding: 10px; background-color: #f0f0f0; border-radius: 8px;
+            display: flex; gap: 10px; flex-wrap: wrap; border: 1px dashed #aaa;
+        }
+        .preview-img { max-height: 80px; border-radius: 5px; display: block; border: 1px solid #ccc; }
+
+        .system-log {
+            color: #888;
+            font-size: 13px;
+            font-style: italic;
+            background-color: #e2e2e2;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 8px;
+            border: 1px solid #ccc;
+        }
     </style>
 </head>
 <body>
@@ -22,64 +52,156 @@
     <div class="sidebar">
         <label>挑選 LLM 模型：
             <select id="model-select">
-                <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (預設推薦)</option>
-                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-lite (輕量極速版)</option>
+                <option value="auto" selected>Auto (智慧分配最適模型)</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro (穩定邏輯高階)</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (極速輕量模型)</option>
             </select>
         </label>
+        <label>System Prompt：<textarea id="system-prompt" rows="4" placeholder="設定 AI 角色..."></textarea></label>
+        <label>Temperature (<span id="temp-val">0.7</span>)：<input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('temp-val').innerText=this.value"></label>
         
-        <label>System Prompt：
-            <textarea id="system-prompt" rows="4" placeholder="設定 AI 角色..."></textarea>
-        </label>
-        
-        <label>Temperature (<span id="temp-val">0.7</span>)：
-            <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" oninput="document.getElementById('temp-val').innerText=this.value">
-        </label>
+        <button class="clear-btn" onclick="clearHistory()">🗑️ 清除對話記憶</button>
     </div>
 
     <div class="chat-container">
         <div id="chat-box"></div>
+        <div id="image-preview-container" style="display: none;"></div>
         <div style="display: flex; gap: 10px;">
+            <input type="file" id="image-upload" accept="image/*" multiple style="max-width: 200px;">
             <input type="text" id="user-input" style="flex-grow: 1;" placeholder="輸入訊息... (按 Enter 發送)">
-            <button onclick="sendMessage()">發送</button>
+            <button id="send-btn" onclick="toggleAction()">發送</button>
         </div>
     </div>
 
     <script>
         let chatHistory = []; 
+        let abortController = null; 
+        let isGenerating = false;  
+
+        window.onload = async function() {
+            try {
+                const response = await fetch('http://localhost:8000/history');
+                const data = await response.json();
+                if (data && data.length > 0) {
+                    chatHistory = data;
+                    data.forEach(msg => appendMessage(msg.role, msg.text));
+                }
+            } catch(e) {
+                console.log("無法連線至伺服器讀取記憶", e);
+            }
+        };
+
+        async function clearHistory() {
+            if (confirm("確定要刪除所有歷史對話紀錄嗎？（這將清空 JSON 檔案）")) {
+                await fetch('http://localhost:8000/history', { method: 'DELETE' });
+                chatHistory = [];
+                document.getElementById('chat-box').innerHTML = '';
+            }
+        }
 
         document.getElementById("user-input").addEventListener("keypress", function(event) {
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && !isGenerating) {
                 event.preventDefault();
-                sendMessage();
+                toggleAction();
             }
         });
 
+        document.getElementById("image-upload").addEventListener("change", function(event) {
+            const files = Array.from(event.target.files);
+            const previewContainer = document.getElementById("image-preview-container");
+            previewContainer.innerHTML = '';
+
+            if (files.length > 0) {
+                previewContainer.style.display = "flex";
+                files.forEach(file => {
+                    const img = document.createElement("img");
+                    img.src = URL.createObjectURL(file);
+                    img.className = "preview-img";
+                    previewContainer.appendChild(img);
+                });
+            } else {
+                previewContainer.style.display = "none";
+            }
+        });
+
+        function toggleAction() {
+            if (isGenerating) {
+                if (abortController) abortController.abort(); 
+            } else {
+                sendMessage();
+            }
+        }
+
         async function sendMessage() {
             const inputField = document.getElementById('user-input');
+            const fileInput = document.getElementById('image-upload');
             const message = inputField.value.trim();
-            if (!message) return;
+            const files = Array.from(fileInput.files);
 
-            appendMessage('user', message);
+            if (!message && files.length === 0) return;
+
+            isGenerating = true;
+            const sendBtn = document.getElementById("send-btn");
+            sendBtn.innerText = "停止";
+            sendBtn.style.backgroundColor = "#f44336"; 
+            
+            abortController = new AbortController();
+
+            const imagePromises = files.map(file => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        resolve({
+                            fullDataUrl: reader.result,
+                            base64: reader.result.split(',')[1],
+                            mime_type: file.type,
+                            name: file.name
+                        });
+                    };
+                    reader.readAsDataURL(file);
+                });
+            });
+
+            const processedImages = await Promise.all(imagePromises);
+            const fullDataUrls = processedImages.map(img => img.fullDataUrl);
+            const apiImages = processedImages.map(img => ({
+                image_base64: img.base64,
+                image_mime_type: img.mime_type
+            }));
+
+            let displayMsg = message;
+            if (files.length > 0) {
+                displayMsg = message ? message : `(傳送了 ${files.length} 張圖片)`;
+            }
+            appendMessage('user', displayMsg, fullDataUrls);
+            
             inputField.value = '';
-
-            const recentHistory = chatHistory.slice(-15);
+            fileInput.value = '';
+            const previewContainer = document.getElementById("image-preview-container");
+            previewContainer.innerHTML = '';
+            previewContainer.style.display = "none";
 
             const payload = {
                 model: document.getElementById('model-select').value,
                 system_prompt: document.getElementById('system-prompt').value,
                 temperature: parseFloat(document.getElementById('temperature').value),
-                history: recentHistory,
-                message: message
+                history: chatHistory.slice(-15),
+                message: message || "請描述這些圖片", 
+                images: apiImages 
             };
 
-            const modelMsgDiv = appendMessage('model', '');
+            const modelMsgDiv = appendMessage('model', 'AI 正在思考中，請稍候...');
+            modelMsgDiv.classList.add('thinking');
+            
             let fullModelResponse = "";
+            let isFirstChunk = true; 
 
             try {
                 const response = await fetch('http://localhost:8000/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
+                    signal: abortController.signal 
                 });
 
                 const reader = response.body.getReader();
@@ -89,27 +211,78 @@
                     const { done, value } = await reader.read();
                     if (done) break;
                     
+                    if (isFirstChunk) {
+                        modelMsgDiv.innerHTML = ''; 
+                        modelMsgDiv.classList.remove('thinking');
+                        isFirstChunk = false;
+                    }
+                    
                     const chunkText = decoder.decode(value, { stream: true });
                     fullModelResponse += chunkText;
-                    modelMsgDiv.innerText = fullModelResponse;
+                    modelMsgDiv.innerHTML = fullModelResponse;
                 }
 
-                chatHistory.push({ role: "user", text: message });
+                let historyMsg = displayMsg;
+                if(files.length > 0) {
+                    const fileNames = processedImages.map(img => img.name).join(', ');
+                    historyMsg += ` [附圖: ${fileNames}]`;
+                }
+                
+                chatHistory.push({ role: "user", text: historyMsg });
                 chatHistory.push({ role: "model", text: fullModelResponse });
 
+                await fetch('http://localhost:8000/history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(chatHistory)
+                });
+
             } catch (error) {
-                modelMsgDiv.innerText = "連線發生錯誤，請確認後端伺服器是否開啟。";
+                modelMsgDiv.classList.remove('thinking');
+                if (error.name === 'AbortError') {
+                    modelMsgDiv.innerHTML += "\n\n<span class='system-log'>[系統提示] 已手動停止生成。</span>";
+                } else {
+                    modelMsgDiv.innerHTML = "連線發生錯誤，請確認後端伺服器是否開啟。";
+                }
+            } finally {
+                isGenerating = false;
+                sendBtn.innerText = "發送";
+                sendBtn.style.backgroundColor = "#4CAF50"; 
+                abortController = null;
             }
         }
 
-        function appendMessage(role, text) {
+        function appendMessage(role, text, imageUrls = []) {
             const box = document.getElementById('chat-box');
             const div = document.createElement('div');
             div.className = role === 'user' ? 'message user-msg' : 'message model-msg';
-            div.innerText = text;
+            
+            if (imageUrls && imageUrls.length > 0) {
+                const imgContainer = document.createElement('div');
+                imgContainer.style.display = 'flex';
+                imgContainer.style.gap = '8px';
+                imgContainer.style.flexWrap = 'wrap';
+                imgContainer.style.marginBottom = '8px';
+
+                imageUrls.forEach(url => {
+                    const img = document.createElement('img');
+                    img.src = url;
+                    img.style.maxWidth = '150px'; 
+                    img.style.maxHeight = '150px';
+                    img.style.objectFit = 'cover';
+                    img.style.borderRadius = '5px';
+                    imgContainer.appendChild(img);
+                });
+                div.appendChild(imgContainer);
+            }
+
+            const textSpan = document.createElement('span');
+            textSpan.innerText = text;
+            div.appendChild(textSpan);
+
             box.appendChild(div);
             box.scrollTop = box.scrollHeight;
-            return div;
+            return div; 
         }
     </script>
 </body>
